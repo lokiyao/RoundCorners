@@ -3,9 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>屏幕圆角</string>
+	<string>RoundCorners</string>
 	<key>CFBundleExecutable</key>
 	<string>RoundCorners</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>local.roundcorners.app</string>
 	<key>CFBundleName</key>
@@ -13,13 +15,11 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.6</string>
+	<string>1.9.2</string>
 	<key>CFBundleVersion</key>
-	<string>7</string>
+	<string>12</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>

@@ -18,7 +18,7 @@ final class PinkSliderCell: NSSliderCell {
     }
 }
 
-// Four tiny, static windows per display. No timers, animation or event taps.
+// Four tiny static windows per display; optional low-frequency full-screen detection.
 final class CornerView: NSView {
     private let maskPath: CGPath
     init(size: CGFloat, radius: CGFloat, screenSize: CGSize, corner: Int) {
@@ -51,6 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var windows: [NSWindow] = []
     private var statusItem: NSStatusItem!
     private var enabled = true
+    private var autoPaused = false
+    private var fullscreenTimer: Timer?
+    private var autoPauseEnabled: Bool { defaults.bool(forKey: "autoPauseFullscreen") }
     private let defaults = UserDefaults.standard
     private var radiusLabel: NSTextField?
     private var nativeCurve: Bool { defaults.bool(forKey: "nativeCurve") }
@@ -58,19 +61,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var radius: CGFloat { nativeCurve ? 26.1 : CGFloat(customRadius) }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier!).count > 1 {
+        // Launch Services can override the policy set before app.run().
+        NSApp.setActivationPolicy(.accessory)
+        let knownIDs = ["local.roundcorners.app"]
+        let others = knownIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        if Bundle.main.bundlePath == "/Applications/RoundCorners.app" {
+            others.forEach { _ = $0.terminate() }
+        } else if !others.isEmpty {
             NSApp.terminate(nil)
             return
         }
-        defaults.register(defaults: ["radius": 12, "nativeCurve": true])
+        defaults.register(defaults: ["radius": 12, "nativeCurve": true, "autoPauseFullscreen": true])
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "屏幕圆角")
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: url) {
+            icon.size = NSSize(width: 20, height: 20)
+            icon.isTemplate = false
+            statusItem.button?.image = icon
+            statusItem.button?.imageScaling = .scaleProportionallyDown
+        }
+        statusItem.button?.setAccessibilityLabel("RoundCorners")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
         NotificationCenter.default.addObserver(self, selector: #selector(rebuild), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(rebuild), name: NSWorkspace.didWakeNotification, object: nil)
+        for event in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(checkFullscreen), name: event, object: nil)
+        }
+        configureFullscreenDetection()
         rebuild()
+        if Bundle.main.bundlePath == "/Applications/RoundCorners.app",
+           !defaults.bool(forKey: "installedLoginMigrated") {
+            do {
+                try SMAppService.mainApp.unregister()
+                try SMAppService.mainApp.register()
+                defaults.set(true, forKey: "installedLoginMigrated")
+                defaults.set(true, forKey: "loginAttempted")
+            } catch { NSLog("Login item migration: %@", error.localizedDescription) }
+        }
         if !defaults.bool(forKey: "loginAttempted") {
             defaults.set(true, forKey: "loginAttempted")
             setLoginEnabled(true)
@@ -82,6 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let title = NSMenuItem(title: "屏幕圆角 · RoundCorners", action: nil, keyEquivalent: "")
         menu.addItem(title)
         add(menu, enabled ? "暂停圆角" : "启用圆角", #selector(toggleCorners))
+        let automatic = add(menu, "全屏时自动暂停", #selector(toggleFullscreenDetection))
+        automatic.state = autoPauseEnabled ? .on : .off
+        if autoPaused && enabled {
+            menu.addItem(NSMenuItem(title: "已因全屏自动暂停", action: nil, keyEquivalent: ""))
+        }
         menu.addItem(.separator())
         for (name, tag) in [("苹果原生曲率", 1), ("SwiftUI", 0)] {
             let item = add(menu, name, #selector(changeCurve(_:)))
@@ -136,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func rebuild() {
         windows.forEach { $0.orderOut(nil); $0.close() }
         windows.removeAll()
-        guard enabled else { return }
+        guard enabled && !autoPaused else { return }
         for screen in NSScreen.screens {
             let f = screen.frame
             let r = ceil(radius * 3)
@@ -163,7 +198,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defaults.set(sender.tag == 1, forKey: "nativeCurve")
         rebuild()
     }
-    @objc private func toggleCorners() { enabled.toggle(); rebuild() }
+    @objc private func toggleCorners() {
+        enabled.toggle()
+        configureFullscreenDetection()
+        rebuild()
+    }
+    @objc private func toggleFullscreenDetection() {
+        defaults.set(!autoPauseEnabled, forKey: "autoPauseFullscreen")
+        configureFullscreenDetection()
+    }
+    private func configureFullscreenDetection() {
+        fullscreenTimer?.invalidate()
+        fullscreenTimer = nil
+        checkFullscreen()
+        guard autoPauseEnabled && enabled else { return }
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.checkFullscreen() }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        fullscreenTimer = timer
+    }
+    @objc private func checkFullscreen() {
+        var detected = false
+        if autoPauseEnabled && enabled {
+            guard let front = NSWorkspace.shared.frontmostApplication,
+                  front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            let displayFrames = NSScreen.screens.compactMap { screen -> CGRect? in
+                guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+                return CGDisplayBounds(number.uint32Value)
+            }
+            if let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+                detected = info.contains { window in
+                    guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == front.processIdentifier,
+                          (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                          (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0,
+                          let raw = window[kCGWindowBounds as String] as? NSDictionary,
+                          let bounds = CGRect(dictionaryRepresentation: raw) else { return false }
+                    return displayFrames.contains { frame in
+                        abs(bounds.minX - frame.minX) <= 2 && abs(bounds.minY - frame.minY) <= 2 &&
+                        abs(bounds.width - frame.width) <= 2 && abs(bounds.height - frame.height) <= 2
+                    }
+                }
+            }
+        }
+        guard detected != autoPaused else { return }
+        autoPaused = detected
+        statusItem.button?.toolTip = detected ? "RoundCorners · 全屏自动暂停" : "RoundCorners"
+        rebuild()
+    }
     private var radiusText: String {
         String(format: "圆角大小：%.1f pt", customRadius)
     }

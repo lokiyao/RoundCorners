@@ -12,13 +12,14 @@ A lightweight native macOS menu bar app that adds smooth black corners to your d
 - Custom slider value and position are preserved when the fixed preset disables the slider.
 - Pink filled slider track (`#EABEBB`) and a gray disabled state.
 - Launch at login through Apple's ServiceManagement framework.
-- No polling, network access, timers, or continuous animations. Battery usage has not been benchmarked.
+- Optional automatic pause for full-screen foreground windows, enabled by default. Checks immediately when the active app or Space changes, with a five-second fallback check, and restores the overlay after full-screen ends.
+- No network access or continuous animations. The detection timer stops when automatic detection is disabled or the overlay is manually paused. Battery usage has not been benchmarked.
 
 ## Install
 
 1. Download `RoundCorners-macOS-arm64.zip` from this repository using the file's download button.
-2. Unzip it and place `RoundCorners.app` in a permanent location.
-3. Open the app and use the dashed rectangle icon in the menu bar.
+2. Unzip it and place `RoundCorners.app` in `/Applications`.
+3. Open the app and use the pink corner icon in the menu bar.
 4. If macOS requests approval for launch at login, open Login Items settings from the app menu.
 
 The included app currently has a Chinese menu. This README and repository documentation are in English.
@@ -47,6 +48,7 @@ Both corner modes use Apple's continuous shape implementation. The fixed 26.1 pt
 ## Settings
 
 - **Enable / Pause:** toggles the overlay. This action has no checkmark.
+- **Pause in full screen:** automatically pauses when a foreground window matches a display’s full bounds. Manual pause remains in effect until you resume it.
 - **Fixed preset:** applies 26.1 pt while disabling the custom slider without changing its saved value.
 - **SwiftUI:** enables the 1–36 pt slider.
 - **Launch at login:** registers or unregisters the app with macOS.
@@ -57,6 +59,7 @@ Keep the app at a stable path after enabling launch at login. Before moving it, 
 
 - Apple Silicon and macOS 13 or later only.
 - System security screens and exclusive full-screen applications are not guaranteed to show the overlay.
+- Full-screen detection uses window geometry; borderless windows covering a display also count. Unusual game or window modes may not be detected.
 - Screenshots may include the black corners.
 - No claim of pixel-identical matching to private macOS window geometry.
 - Low-overhead design; power consumption has not been measured.
@@ -72,4 +75,4 @@ Disable launch at login from the menu, quit the app, and delete `RoundCorners.ap
 | `main.swift` | App and menu implementation |
 | `Info.plist` | App bundle metadata |
 | `build.sh` | Compile and sign locally |
-| `RoundCorners-macOS-arm64.zip` | Ready-to-extract local build, version 1.6 |
+| `RoundCorners-macOS-arm64.zip` | Ready-to-extract local build, version 1.9.2 |
